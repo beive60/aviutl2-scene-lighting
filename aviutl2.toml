@@ -1,0 +1,13 @@
+#:schema ./.aviutl2-cli/aviutl2.schema.json
+[project]
+id = "aviutl2-scene-lighting"
+name = "aviutl2-scene-lighting"
+version = "0.1.0"
+
+[development]
+aviutl2_version = "latest"
+
+[artifacts.script]
+destination = "Script/@scene_lighting.anm2"
+source = "scripts/@scene_lighting.anm2"
+placement_method = "copy"

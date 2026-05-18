@@ -1,5 +1,5 @@
 @scene_lighting
---track@bg_layer:背景レイヤー,-20,-1,-1
+--track@bg_layer:背景レイヤー,-20,-1,-1,1
 --track@blend_mode:ブレンドモード,0,3,1
 --track@intensity:強度,0,100,50
 --track@blur_radius:ブラー半径,1,100,15
@@ -25,10 +25,12 @@
 -- ----------------------------------------------------------------
 -- 定数・パラメータ前処理
 -- ----------------------------------------------------------------
-local edge_w          = math.max(1, edge_width)
-local edge_thr        = math.max(1, edge_threshold)
-local intensity_f = intensity / 100.0
-local INF         = edge_w + 2          -- 距離変換用無限大（エッジ幅より大きければよい）
+local edge_w       = math.max(1, math.floor(edge_width))
+local edge_thr     = math.max(1, math.floor(edge_threshold))
+local blend_mode_i = math.floor(blend_mode)
+local sampling_i   = math.floor(sampling_method)
+local intensity_f  = intensity / 100.0
+local INF          = edge_w + 2          -- 距離変換用無限大（エッジ幅より大きければよい）
 
 -- ----------------------------------------------------------------
 -- ヘルパー関数
@@ -70,7 +72,7 @@ local blend_fns = {
     [2] = blend_overlay,
     [3] = blend_add,
 }
-local blend_fn = blend_fns[blend_mode] or blend_screen
+local blend_fn = blend_fns[blend_mode_i] or blend_screen
 
 -- ティントカラー分解 (0xRRGGBB → r, g, b)
 local tint_r = math.floor(tint_color / 0x10000) % 0x100
@@ -97,7 +99,7 @@ local bg_w, bg_h         = fg_w, fg_h
 local has_bg             = false
 
 do
-    local abs_layer = (obj.layer or 1) + bg_layer
+    local abs_layer = (obj.layer or 1) + math.floor(bg_layer)
 
     -- 試行 1: 絶対レイヤー番号でバッファ取得 (AviUtl2 推奨パス)
     local ok = pcall(function()
@@ -129,7 +131,7 @@ end
 local amb_r, amb_g, amb_b = 128, 128, 128
 
 if has_bg then
-    if sampling_method == 1 then
+    if sampling_i == 1 then
         -- 中央点サンプリング: 均等配置の 5 点を平均
         local pts = {
             { math.floor(bg_w * 0.25), math.floor(bg_h * 0.25) },
@@ -150,7 +152,7 @@ if has_bg then
         amb_b = math.floor(sb / #pts)
     else
         -- 平均サンプリング: blur_radius をステップとして格子状にサンプリング
-        local step = math.max(1, blur_radius)
+        local step = math.max(1, math.floor(blur_radius))
         local sr, sg, sb, cnt = 0, 0, 0, 0
         for y = 0, bg_h - 1, step do
             for x = 0, bg_w - 1, step do

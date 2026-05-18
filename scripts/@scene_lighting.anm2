@@ -25,10 +25,10 @@
 -- ----------------------------------------------------------------
 -- 定数・パラメータ前処理
 -- ----------------------------------------------------------------
-local ew          = math.max(1, edge_width)
-local ethr        = math.max(1, edge_threshold)
+local edge_w          = math.max(1, edge_width)
+local edge_thr        = math.max(1, edge_threshold)
 local intensity_f = intensity / 100.0
-local INF         = ew + 2          -- 距離変換用無限大（エッジ幅より大きければよい）
+local INF         = edge_w + 2          -- 距離変換用無限大（エッジ幅より大きければよい）
 
 -- ----------------------------------------------------------------
 -- ヘルパー関数
@@ -178,12 +178,12 @@ amb_b = clamp255(amb_b * tint_b / 255)
 -- パス 4: アルファエッジ検出 + O(N) 2 パス距離変換
 -- ================================================================
 -- dist_map[i]:
---   nil  … 透明画素（alpha < ethr）: エッジマスクの伝播を遮断
+--   nil  … 透明画素（alpha < edge_thr）: エッジマスクの伝播を遮断
 --   0    … エッジ境界画素（不透明かつ 4 近傍に透明が存在）
 --   1..  … エッジ境界からの Manhattan 距離
---   INF  … エッジ境界から ew より遠い不透明内部画素
+--   INF  … エッジ境界から edge_w より遠い不透明内部画素
 --
--- エッジマスク値 em(i) = 1 - dist_map[i]/ew  (0 <= em <= 1、dist >= ew は 0)
+-- エッジマスク値 em(i) = 1 - dist_map[i]/edge_w  (0 <= em <= 1、dist >= edge_w は 0)
 
 local dist_map = {}
 
@@ -195,19 +195,19 @@ for y = 0, fg_h - 1 do
         -- アルファは BGRA の 4 バイト目 → 1 始まりで i*4+4
         local a = string.byte(fg_data, i * 4 + 4)
 
-        if a >= ethr then
+        if a >= edge_thr then
             -- 4 近傍のいずれかが透明なら境界画素
             local on_edge = false
-            if x > 0       and string.byte(fg_data, (i - 1)      * 4 + 4) < ethr then on_edge = true end
+            if x > 0       and string.byte(fg_data, (i - 1)      * 4 + 4) < edge_thr then on_edge = true end
             if not on_edge and
-               x < fg_w-1  and string.byte(fg_data, (i + 1)      * 4 + 4) < ethr then on_edge = true end
+               x < fg_w-1  and string.byte(fg_data, (i + 1)      * 4 + 4) < edge_thr then on_edge = true end
             if not on_edge and
-               y > 0       and string.byte(fg_data, (i - fg_w)   * 4 + 4) < ethr then on_edge = true end
+               y > 0       and string.byte(fg_data, (i - fg_w)   * 4 + 4) < edge_thr then on_edge = true end
             if not on_edge and
-               y < fg_h-1  and string.byte(fg_data, (i + fg_w)   * 4 + 4) < ethr then on_edge = true end
+               y < fg_h-1  and string.byte(fg_data, (i + fg_w)   * 4 + 4) < edge_thr then on_edge = true end
             dist_map[i] = on_edge and 0 or INF
         end
-        -- alpha < ethr の透明画素は dist_map に登録しない (nil = 伝播ブロック)
+        -- alpha < edge_thr の透明画素は dist_map に登録しない (nil = 伝播ブロック)
     end
 end
 
@@ -276,10 +276,10 @@ for i = 0, total - 1 do
     local base = i * 4 + 1        -- BGRA の先頭バイト位置（1 始まり）
     local ob   = string.byte(fg_data, base)     -- B
     local og   = string.byte(fg_data, base + 1) -- G
-    local or_  = string.byte(fg_data, base + 2) -- R
+    local orig_r  = string.byte(fg_data, base + 2) -- R
     local oa   = string.byte(fg_data, base + 3) -- A
 
-    local nb, ng, nr = ob, og, or_
+    local nb, ng, nr = ob, og, orig_r
 
     if oa > 0 then
         -- --------------------------------------------------------
@@ -287,16 +287,16 @@ for i = 0, total - 1 do
         --     blend_fn(前景ch, 環境色ch) でブレンド値を求め、
         --     intensity_f の割合だけ前景色からブレンド値へ補間する。
         -- --------------------------------------------------------
-        local br = blend_fn(or_, amb_r)
+        local br = blend_fn(orig_r, amb_r)
         local bg = blend_fn(og,  amb_g)
         local bb = blend_fn(ob,  amb_b)
-        nr = clamp255(or_ + (br - or_) * intensity_f)
+        nr = clamp255(orig_r + (br - orig_r) * intensity_f)
         ng = clamp255(og  + (bg - og)  * intensity_f)
         nb = clamp255(ob  + (bb - ob)  * intensity_f)
 
         -- エッジマスク値を距離変換から算出
         local d  = dist_map[i]
-        local em = (d and d < ew) and (1.0 - d / ew) or 0.0
+        local em = (d and d < edge_w) and (1.0 - d / edge_w) or 0.0
 
         if em > 0 then
             -- ----------------------------------------------------
@@ -336,10 +336,10 @@ for i = 0, total - 1 do
                 local d_dn = dist_map[i + fg_w]   or INF
                 local d_up = dist_map[i - fg_w]   or INF
 
-                local em_r  = (d_r  < ew) and (1.0 - d_r  / ew) or 0.0
-                local em_l  = (d_l  < ew) and (1.0 - d_l  / ew) or 0.0
-                local em_dn = (d_dn < ew) and (1.0 - d_dn / ew) or 0.0
-                local em_up = (d_up < ew) and (1.0 - d_up / ew) or 0.0
+                local em_r  = (d_r  < edge_w) and (1.0 - d_r  / edge_w) or 0.0
+                local em_l  = (d_l  < edge_w) and (1.0 - d_l  / edge_w) or 0.0
+                local em_dn = (d_dn < edge_w) and (1.0 - d_dn / edge_w) or 0.0
+                local em_up = (d_up < edge_w) and (1.0 - d_up / edge_w) or 0.0
 
                 local gx  = em_r - em_l
                 local gy  = em_dn - em_up

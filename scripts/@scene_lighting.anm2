@@ -309,8 +309,8 @@ for i = 0, total - 1 do
             if enable_wrap then
                 local wrap_r, wrap_g, wrap_b = amb_r, amb_g, amb_b
                 if has_bg then
-                    local bx   = math.min(cur_x, bg_w - 1)
-                    local by   = math.min(cur_y, bg_h - 1)
+                    local bx   = math.min(math.floor(cur_x * bg_w / fg_w), bg_w - 1)
+                    local by   = math.min(math.floor(cur_y * bg_h / fg_h), bg_h - 1)
                     local bidx = (by * bg_w + bx) * 4 + 1
                     wrap_b = string.byte(bg_data, bidx)
                     wrap_g = string.byte(bg_data, bidx + 1)

@@ -367,12 +367,14 @@ for i = 0, total - 1 do
     if cur_x >= fg_w then cur_x = 0; cur_y = cur_y + 1 end
 end
 
--- 出力バイト列を 1024 バイト単位でチャンク化して文字列に変換し書き戻す。
--- (table.unpack の引数上限と Lua スタック制限を回避するため)
-local CHUNK  = 1024
-local chunks = {}
+-- 出力バイト列を 200 バイト単位でチャンク化して文字列に変換し書き戻す。
+-- Lua 5.1 では table.unpack が存在しないためグローバルの unpack へフォールバックし、
+-- LUAI_MAXCSTACK (5.1 デフォルト 200) を超えないよう小さなチャンクサイズを使用する。
+local unpack_ = table.unpack or unpack
+local CHUNK   = 200
+local chunks  = {}
 for k = 1, #out, CHUNK do
     local k_end = math.min(k + CHUNK - 1, #out)
-    chunks[#chunks + 1] = string.char(table.unpack(out, k, k_end))
+    chunks[#chunks + 1] = string.char(unpack_(out, k, k_end))
 end
 obj.putpixeldata(table.concat(chunks))

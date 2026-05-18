@@ -1,14 +1,14 @@
 @scene_lighting
 --track@bg_layer:背景レイヤー,-20,-1,-1,1
---track@blend_mode:ブレンドモード,0,3,1
+--track@blend_mode:ブレンドモード,0,3,1,1
 --track@intensity:強度,0,100,50
---track@blur_radius:ブラー半径,1,100,15
---track@edge_width:エッジ幅,1,50,10
---track@edge_threshold:エッジ閾値,1,255,16
+--track@blur_radius:ブラー半径,1,100,15,1
+--track@edge_width:エッジ幅,1,50,10,1
+--track@edge_threshold:エッジ閾値,1,255,16,1
 --check@enable_wrap:ライトラップ,true
 --check@enable_rim:リムライト,true
 --color@tint_color:ベースカラー,0xffffff
---track@sampling_method:サンプリング,0,1,0
+--track@sampling_method:サンプリング,0,1,0,1
 --separator:ブレンドモード: 0=乗算 1=スクリーン 2=オーバーレイ 3=加算
 --separator:サンプリング: 0=平均 1=中央点
 

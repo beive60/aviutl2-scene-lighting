@@ -4,3 +4,7 @@
 # AviUtl2 CLI
 /.aviutl2-cli
 /release
+
+# log
+
+/logs

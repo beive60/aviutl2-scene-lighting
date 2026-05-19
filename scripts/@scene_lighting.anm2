@@ -121,7 +121,7 @@ float4 scene_lighting_main(float4 pos : SV_Position) : SV_Target {
 local ffi          = require("ffi")
 local edge_thr     = math.max(1, math.floor(edge_threshold)) / 255.0
 local blend_mode_i = math.floor(blend_mode)
-local sampling_i   = math.floor(sampling_method)
+local sampling_i   = math.max(0, math.min(1, math.floor(sampling_method)))
 local intensity_f  = intensity / 100.0
 local rim_angle_rad = math.rad(rim_angle)
 local light_dx      = math.cos(rim_angle_rad)

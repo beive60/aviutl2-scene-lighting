@@ -41,13 +41,14 @@ float4 main(float2 uv : TEXCOORD) : COLOR {
     float  athr  = cb0[1].y;
     if (c.a < athr) return c;  // 完全透明画素はエッジ検出・ブレンドをスキップ
 
-    float3 amb   = cb0[0].xyz;
-    float  inten = cb0[0].w;
-    float  bmode = cb0[1].z;
-    float  ewrap = cb0[1].w;
-    float  erim  = cb0[2].x;
-    float  ldx   = cb0[2].y;
-    float  ldy   = cb0[2].z;
+    float3 amb    = cb0[0].xyz;
+    float  inten  = cb0[0].w;
+    float  edge_w = cb0[1].x;   // エッジ幅 (1–50 画素)
+    float  bmode  = cb0[1].z;
+    float  ewrap  = cb0[1].w;
+    float  erim   = cb0[2].x;
+    float  ldx    = cb0[2].y;
+    float  ldy    = cb0[2].z;
 
     // 環境色ブレンド
     float3 blended;
@@ -59,13 +60,30 @@ float4 main(float2 uv : TEXCOORD) : COLOR {
     // テクセルサイズ (ddx/ddy で取得)
     float2 ts = abs(float2(ddx(uv.x), ddy(uv.y)));
 
-    // 4 近傍アルファでエッジ判定
-    float a_l = tex2D(sFg, uv + float2(-ts.x, 0.0)).a;
-    float a_r = tex2D(sFg, uv + float2( ts.x, 0.0)).a;
-    float a_u = tex2D(sFg, uv + float2(0.0, -ts.y)).a;
-    float a_d = tex2D(sFg, uv + float2(0.0,  ts.y)).a;
-    float minN = min(min(a_l, a_r), min(a_u, a_d));
-    float em   = (minN < athr) ? 1.0 : 0.0;
+    // エッジ幅ループ: 1 画素ずつ外側に向かって透明画素を探し、
+    // 最近傍透明画素からの距離 k で em = 1 - (k-1)/edge_w を算出する。
+    // これにより edge_width 画素のグラデーション幅を実現する。
+    // MAX_EDGE_W は --track@edge_width の上限 (50) と一致する。
+    static const int MAX_EDGE_W = 50;
+    float em = 0.0;
+    float nx = 0.0;  // リムライト用勾配 X
+    float ny = 0.0;  // リムライト用勾配 Y
+    int   iEdgeW = (int)edge_w;
+    [loop]
+    for (int k = 1; k <= MAX_EDGE_W; k++) {
+        if (k > iEdgeW) break;
+        float2 s  = ts * (float)k;
+        float  aL = tex2D(sFg, uv + float2(-s.x,  0.0)).a;
+        float  aR = tex2D(sFg, uv + float2( s.x,  0.0)).a;
+        float  aU = tex2D(sFg, uv + float2( 0.0, -s.y)).a;
+        float  aD = tex2D(sFg, uv + float2( 0.0,  s.y)).a;
+        if (min(min(aL, aR), min(aU, aD)) < athr) {
+            em = 1.0 - ((float)k - 1.0) / edge_w;
+            nx = step(athr, aR) - step(athr, aL);
+            ny = step(athr, aD) - step(athr, aU);
+            break;
+        }
+    }
 
     // ライトラップ
     if (ewrap > 0.5 && em > 0.0) {
@@ -75,11 +93,9 @@ float4 main(float2 uv : TEXCOORD) : COLOR {
 
     // リムライト (勾配から疑似法線)
     if (erim > 0.5 && em > 0.0) {
-        float gx = step(athr, a_r) - step(athr, a_l);
-        float gy = step(athr, a_d) - step(athr, a_u);
-        float gl = length(float2(gx, gy));
+        float gl = length(float2(nx, ny));
         if (gl > 0.001) {
-            float2 nrm = float2(gx, gy) / gl;
+            float2 nrm = float2(nx, ny) / gl;
             float  rim = max(0.0, dot(nrm, float2(ldx, ldy)));
             rim = rim * em * inten * 0.6;
             rgb = saturate(rgb + amb * rim);
@@ -128,30 +144,33 @@ local bg_ptr
 local bg_w, bg_h = fg_w, fg_h
 local has_bg     = false
 
-do
-    local abs_layer = (obj.layer or 1) + math.floor(bg_layer)
-
-    -- 試行 1: 絶対レイヤー番号でバッファ取得
-    local ok = pcall(function()
-        obj.copybuffer("cache:scene_lighting/bg", "obj:" .. abs_layer)
-        local ud, w, h = obj.getpixeldata("cache:scene_lighting/bg")
+-- キャッシュ名からピクセルポインタを取得するユーティリティ
+local function try_copy_bg(src)
+    if has_bg then return end
+    pcall(function()
+        obj.copybuffer("cache:scene_lighting/bg", src)
+        local ud = obj.getpixeldata("cache:scene_lighting/bg")
         if ud then
-            bg_ptr = ffi.cast("uint8_t*", ud)
-            bg_w, bg_h, has_bg = w or fg_w, h or fg_h, true
+            local ok2, ptr = pcall(ffi.cast, "uint8_t*", ud)
+            if ok2 and ptr then
+                bg_ptr = ptr
+                has_bg = true
+            end
         end
     end)
+end
 
-    -- 試行 2: シーンフレームバッファ（全レイヤー合成結果）にフォールバック
-    if not has_bg then
-        pcall(function()
-            obj.copybuffer("cache:scene_lighting/bg", "frm:0")
-            local ud, w, h = obj.getpixeldata("cache:scene_lighting/bg")
-            if ud then
-                bg_ptr = ffi.cast("uint8_t*", ud)
-                bg_w, bg_h, has_bg = w or fg_w, h or fg_h, true
-            end
-        end)
-    end
+do
+    -- 絶対レイヤー番号 (1 始まりを保証; obj.layer が 0 始まり環境も考慮)
+    local cur_layer = obj.layer or 1
+    local rel       = math.floor(bg_layer)        -- トラックバー値 (通常は負値)
+    local abs1      = math.max(1, cur_layer + rel) -- 1 始まりと仮定
+    local abs0      = math.max(0, cur_layer + rel) -- 0 始まりのフォールバック
+
+    try_copy_bg("obj:" .. abs1)          -- 試行 1: 絶対レイヤー (1 始まり)
+    try_copy_bg("obj:" .. abs0)          -- 試行 2: 絶対レイヤー (0 始まり)
+    try_copy_bg("obj:" .. rel)           -- 試行 3: 相対レイヤー参照
+    try_copy_bg("frm:0")                 -- 試行 4: シーンフレームバッファ全体
 end
 
 -- ================================================================

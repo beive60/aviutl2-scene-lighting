@@ -12,67 +12,97 @@
 --separator:ブレンドモード: 0=乗算 1=スクリーン 2=オーバーレイ 3=加算
 --separator:サンプリング: 0=平均 1=中央点
 
--- scene_lighting.anm2
+-- scene_lighting.anm2  v2
 -- シーンライティング: 背景の環境光を前景オブジェクトに適応させるコンポジット効果
 --
--- 処理パス:
---   1. 前景ピクセルデータ取得      (obj.getpixeldata)
---   2. 背景レイヤーデータ取得      (pcall ガード付き obj.copybuffer)
---   3. 環境色サンプリング          (平均 / 中央点)
---   4. アルファエッジ検出 + 距離変換 (O(N) 2パス)
---   5. コンポジット               (環境色ブレンド + ライトラップ + 疑似法線リムライト)
+-- Lua : 前景/背景キャッシュ生成 + 環境色サンプリング + パラメータ渡し
+-- HLSL: エッジ検出 + 環境色ブレンド + ライトラップ + リムライト (1 パス)
+
+--[[pixelshader@scene_lighting_main:
+// cb0 layout (float4 × 3):
+//   [0] = { amb_r, amb_g, amb_b, intensity }   (0–1 正規化済み)
+//   [1] = { edge_w, edge_thr, blend_mode, enable_wrap }
+//   [2] = { enable_rim, light_dx, light_dy, 0 }
+
+sampler2D sTex : register(s0);   // 描画バッファ (object)
+sampler2D sFg  : register(s1);   // 元前景キャッシュ (cache:scene_lighting/fg)
+
+float4 cb0[3] : register(c0);
+
+float blendCh(float f, float b, float mode) {
+    if (mode < 0.5) return f * b;                                          // mode 0: 乗算
+    if (mode < 1.5) return 1.0 - (1.0 - f) * (1.0 - b);                  // mode 1: スクリーン
+    if (mode < 2.5) return (f < 0.5) ? (2.0*f*b) : (1.0 - 2.0*(1.0-f)*(1.0-b)); // mode 2: オーバーレイ
+    return min(f + b, 1.0);                                                 // mode 3: 加算
+}
+
+float4 main(float2 uv : TEXCOORD) : COLOR {
+    float4 c     = tex2D(sTex, uv);
+    float  athr  = cb0[1].y;
+    if (c.a < athr) return c;  // 完全透明画素はエッジ検出・ブレンドをスキップ
+
+    float3 amb   = cb0[0].xyz;
+    float  inten = cb0[0].w;
+    float  bmode = cb0[1].z;
+    float  ewrap = cb0[1].w;
+    float  erim  = cb0[2].x;
+    float  ldx   = cb0[2].y;
+    float  ldy   = cb0[2].z;
+
+    // 環境色ブレンド
+    float3 blended;
+    blended.r = blendCh(c.r, amb.r, bmode);
+    blended.g = blendCh(c.g, amb.g, bmode);
+    blended.b = blendCh(c.b, amb.b, bmode);
+    float3 rgb = lerp(c.rgb, blended, inten);
+
+    // テクセルサイズ (ddx/ddy で取得)
+    float2 ts = abs(float2(ddx(uv.x), ddy(uv.y)));
+
+    // 4 近傍アルファでエッジ判定
+    float a_l = tex2D(sFg, uv + float2(-ts.x, 0.0)).a;
+    float a_r = tex2D(sFg, uv + float2( ts.x, 0.0)).a;
+    float a_u = tex2D(sFg, uv + float2(0.0, -ts.y)).a;
+    float a_d = tex2D(sFg, uv + float2(0.0,  ts.y)).a;
+    float minN = min(min(a_l, a_r), min(a_u, a_d));
+    float em   = (minN < athr) ? 1.0 : 0.0;
+
+    // ライトラップ
+    if (ewrap > 0.5 && em > 0.0) {
+        float ws = em * inten * 0.5;
+        rgb = saturate(rgb + amb * ws);
+    }
+
+    // リムライト (勾配から疑似法線)
+    if (erim > 0.5 && em > 0.0) {
+        float gx = step(athr, a_r) - step(athr, a_l);
+        float gy = step(athr, a_d) - step(athr, a_u);
+        float gl = length(float2(gx, gy));
+        if (gl > 0.001) {
+            float2 nrm = float2(gx, gy) / gl;
+            float  rim = max(0.0, dot(nrm, float2(ldx, ldy)));
+            rim = rim * em * inten * 0.6;
+            rgb = saturate(rgb + amb * rim);
+        }
+    }
+
+    return float4(rgb, c.a);
+}
+]]
 
 -- ----------------------------------------------------------------
--- 定数・パラメータ前処理
+-- パラメータ前処理
 -- ----------------------------------------------------------------
-local edge_w       = math.max(1, math.floor(edge_width))
-local edge_thr     = math.max(1, math.floor(edge_threshold))
+local ffi          = require("ffi")
+local edge_thr     = math.max(1, math.floor(edge_threshold)) / 255.0
 local blend_mode_i = math.floor(blend_mode)
 local sampling_i   = math.floor(sampling_method)
 local intensity_f  = intensity / 100.0
-local INF          = edge_w + 2          -- 距離変換用無限大（エッジ幅より大きければよい）
 
--- ----------------------------------------------------------------
--- ヘルパー関数
--- ----------------------------------------------------------------
-
--- [0, 255] へのクランプ（整数）
 local function clamp255(v)
     if v < 0 then return 0 elseif v > 255 then return 255
     else return math.floor(v + 0.5) end
 end
-
--- ブレンドモード: 乗算
-local function blend_multiply(f, b)
-    return math.floor(f * b / 255 + 0.5)
-end
-
--- ブレンドモード: スクリーン
-local function blend_screen(f, b)
-    return 255 - math.floor((255 - f) * (255 - b) / 255 + 0.5)
-end
-
--- ブレンドモード: オーバーレイ
-local function blend_overlay(f, b)
-    if f < 128 then
-        return math.floor(2 * f * b / 255 + 0.5)
-    else
-        return 255 - math.floor(2 * (255 - f) * (255 - b) / 255 + 0.5)
-    end
-end
-
--- ブレンドモード: 加算
-local function blend_add(f, b)
-    return math.min(255, f + b)
-end
-
-local blend_fns = {
-    [0] = blend_multiply,
-    [1] = blend_screen,
-    [2] = blend_overlay,
-    [3] = blend_add,
-}
-local blend_fn = blend_fns[blend_mode_i] or blend_screen
 
 -- ティントカラー分解 (0xRRGGBB → r, g, b)
 local tint_r = math.floor(tint_color / 0x10000) % 0x100
@@ -80,25 +110,13 @@ local tint_g = math.floor(tint_color / 0x100)   % 0x100
 local tint_b = tint_color % 0x100
 
 -- ================================================================
--- パス 1: 前景ピクセルデータ取得
+-- 前景キャッシュ
 -- ================================================================
--- AviUtl2 では getpixeldata は userdata (生ポインタ) を返す。
--- ffi.cast("uint8_t*", ud) でバイト配列としてアクセスする (0 始まり)。
--- "cache:名前" バッファが有効。現在オブジェクトは "object" で参照。
-local ffi = require("ffi")
 local fg_w, fg_h = obj.w, obj.h
-local fg_ud, fg_ptr
-do
-    pcall(function()
-        obj.copybuffer("cache:scene_lighting/fg", "object")
-        local ud = obj.getpixeldata("cache:scene_lighting/fg")
-        if ud then fg_ud = ud; fg_ptr = ffi.cast("uint8_t*", ud) end
-    end)
+if fg_w == 0 or fg_h == 0 then
+    error("[scene_lighting] fg size is zero. w=" .. tostring(fg_w) .. " h=" .. tostring(fg_h))
 end
-if not fg_ptr or fg_w == 0 or fg_h == 0 then
-    error("[scene_lighting] fg could not be acquired. w=" .. tostring(fg_w) .. " h=" .. tostring(fg_h))
-end
-local total = fg_w * fg_h
+obj.copybuffer("cache:scene_lighting/fg", "object")
 
 -- ================================================================
 -- パス 2: 背景レイヤーデータ取得
@@ -107,13 +125,13 @@ local total = fg_w * fg_h
 -- obj.copybuffer でそのレイヤーの描画結果を一時バッファにコピーする。
 -- AviUtl2 のバージョンや設定によっては取得できない場合があるため pcall で保護する。
 local bg_ptr
-local bg_w, bg_h         = fg_w, fg_h
-local has_bg             = false
+local bg_w, bg_h = fg_w, fg_h
+local has_bg     = false
 
 do
     local abs_layer = (obj.layer or 1) + math.floor(bg_layer)
 
-    -- 試行 1: 絶対レイヤー番号でバッファ取得 ("cache:..." バッファ経由)
+    -- 試行 1: 絶対レイヤー番号でバッファ取得
     local ok = pcall(function()
         obj.copybuffer("cache:scene_lighting/bg", "obj:" .. abs_layer)
         local ud, w, h = obj.getpixeldata("cache:scene_lighting/bg")
@@ -140,8 +158,6 @@ end
 -- パス 3: 環境色サンプリング
 -- ================================================================
 -- 背景バッファを低密度でサンプリングして代表色（環境光色）を算出する。
--- blur_radius が大きいほどサンプリングステップが広がり、
--- より広域を平均した（ぼかした）色になる。
 local amb_r, amb_g, amb_b = 128, 128, 128
 
 if has_bg then
@@ -191,198 +207,30 @@ amb_g = clamp255(amb_g * tint_g / 255)
 amb_b = clamp255(amb_b * tint_b / 255)
 
 -- ================================================================
--- パス 4: アルファエッジ検出 + O(N) 2 パス距離変換
+-- パス 4/5: ピクセルシェーダーでエッジ検出 + コンポジット
 -- ================================================================
--- dist_map[i]:
---   nil  … 透明画素（alpha < edge_thr）: エッジマスクの伝播を遮断
---   0    … エッジ境界画素（不透明かつ 4 近傍に透明が存在）
---   1..  … エッジ境界からの Manhattan 距離
---   INF  … エッジ境界から edge_w より遠い不透明内部画素
---
--- エッジマスク値 em(i) = 1 - dist_map[i]/edge_w  (0 <= em <= 1、dist >= edge_w は 0)
-
-local dist_map = {}
-
--- ステップ 1: エッジ境界画素の検出と初期化
-for y = 0, fg_h - 1 do
-    local row = y * fg_w
-    for x = 0, fg_w - 1 do
-        local i = row + x
-        -- アルファは BGRA の 4 バイト目 → FFI 0 始まりで i*4+3
-        local a = fg_ptr[i * 4 + 3]
-
-        if a >= edge_thr then
-            -- 4 近傍のいずれかが透明なら境界画素
-            local on_edge = false
-            if x > 0       and fg_ptr[(i - 1)    * 4 + 3] < edge_thr then on_edge = true end
-            if not on_edge and
-               x < fg_w-1  and fg_ptr[(i + 1)    * 4 + 3] < edge_thr then on_edge = true end
-            if not on_edge and
-               y > 0       and fg_ptr[(i - fg_w) * 4 + 3] < edge_thr then on_edge = true end
-            if not on_edge and
-               y < fg_h-1  and fg_ptr[(i + fg_w) * 4 + 3] < edge_thr then on_edge = true end
-            dist_map[i] = on_edge and 0 or INF
-        end
-        -- alpha < edge_thr の透明画素は dist_map に登録しない (nil = 伝播ブロック)
-    end
-end
-
--- ステップ 2: 順方向パス（左上 → 右下）
-for y = 0, fg_h - 1 do
-    local row = y * fg_w
-    for x = 0, fg_w - 1 do
-        local i   = row + x
-        local d   = dist_map[i]
-        if d and d > 0 then          -- 不透明・非境界の画素のみ更新
-            local min_d = d
-            if x > 0 then
-                local d2 = dist_map[i - 1]
-                if d2 and d2 + 1 < min_d then min_d = d2 + 1 end
-            end
-            if y > 0 then
-                local d2 = dist_map[i - fg_w]
-                if d2 and d2 + 1 < min_d then min_d = d2 + 1 end
-            end
-            dist_map[i] = min_d
-        end
-    end
-end
-
--- ステップ 3: 逆方向パス（右下 → 左上）
-for y = fg_h - 1, 0, -1 do
-    local row = y * fg_w
-    for x = fg_w - 1, 0, -1 do
-        local i = row + x
-        local d = dist_map[i]
-        if d and d > 0 then
-            local min_d = d
-            if x < fg_w - 1 then
-                local d2 = dist_map[i + 1]
-                if d2 and d2 + 1 < min_d then min_d = d2 + 1 end
-            end
-            if y < fg_h - 1 then
-                local d2 = dist_map[i + fg_w]
-                if d2 and d2 + 1 < min_d then min_d = d2 + 1 end
-            end
-            dist_map[i] = min_d
-        end
-    end
-end
-
--- リムライト方向（右上からの固定ライト方向、正規化済み）
-local light_dx =  0.707
-local light_dy = -0.707
-
--- ================================================================
--- パス 5: コンポジット
--- ================================================================
--- 各画素に対して以下を順番に適用する:
---   (a) 環境色ブレンド … 全不透明画素に blend_fn で env 色をブレンド
---   (b) ライトラップ   … エッジ領域に背景色（or 環境色）を加算
---   (c) リムライト     … エッジマスク勾配から疑似法線を算出し方向性ハイライトを付加
---
--- FFI ポインタ経由で直接インプレース改変する。
--- 0 始まり: base = i*4, B=base, G=base+1, R=base+2, A=base+3
-
-local cur_x = 0          -- 現在の x 座標（モジュロ演算を避けるカウンタ
-local cur_y = 0          -- 現在の y 座標
-
-for i = 0, total - 1 do
-    local base = i * 4            -- BGRA の先頭バイト位置（0 始まり）
-    local ob      = fg_ptr[base]     -- B
-    local og      = fg_ptr[base + 1] -- G
-    local orig_r  = fg_ptr[base + 2] -- R
-    local oa      = fg_ptr[base + 3] -- A
-
-    local nb, ng, nr = ob, og, orig_r
-
-    if oa > 0 then
-        -- --------------------------------------------------------
-        -- (a) 環境色ブレンド
-        --     blend_fn(前景ch, 環境色ch) でブレンド値を求め、
-        --     intensity_f の割合だけ前景色からブレンド値へ補間する。
-        -- --------------------------------------------------------
-        local br = blend_fn(orig_r, amb_r)
-        local bg = blend_fn(og,  amb_g)
-        local bb = blend_fn(ob,  amb_b)
-        nr = clamp255(orig_r + (br - orig_r) * intensity_f)
-        ng = clamp255(og  + (bg - og)  * intensity_f)
-        nb = clamp255(ob  + (bb - ob)  * intensity_f)
-
-        -- エッジマスク値を距離変換から算出
-        local d  = dist_map[i]
-        local em = (d and d < edge_w) and (1.0 - d / edge_w) or 0.0
-
-        if em > 0 then
-            -- ----------------------------------------------------
-            -- (b) ライトラップ
-            --     エッジ領域に背景の局所色（背景取得失敗時は環境色）を
-            --     スクリーン合成強度の半分で加算する。
-            -- ----------------------------------------------------
-            if enable_wrap then
-                local wrap_r, wrap_g, wrap_b = amb_r, amb_g, amb_b
-                if has_bg and bg_ptr then
-                    local bx    = math.min(math.floor(cur_x * bg_w / fg_w), bg_w - 1)
-                    local by    = math.min(math.floor(cur_y * bg_h / fg_h), bg_h - 1)
-                    local bbase = (by * bg_w + bx) * 4
-                    wrap_b = bg_ptr[bbase]
-                    wrap_g = bg_ptr[bbase + 1]
-                    wrap_r = bg_ptr[bbase + 2]
-                end
-                local ws = em * intensity_f * 0.5
-                nr = clamp255(nr + wrap_r * ws)
-                ng = clamp255(ng + wrap_g * ws)
-                nb = clamp255(nb + wrap_b * ws)
-            end
-
-            -- ----------------------------------------------------
-            -- (c) リムライト（疑似法線ベース）
-            --     エッジマスク値の勾配を疑似法線として使用し、
-            --     ライト方向との内積でリムハイライト強度を計算する。
-            --     全ピクセルへの Sobel 適用（ピローシェーディング）を
-            --     避けるため、エッジ領域内のみで計算する。
-            -- ----------------------------------------------------
-            if enable_rim
-               and cur_x > 0 and cur_x < fg_w - 1
-               and cur_y > 0 and cur_y < fg_h - 1
-            then
-                local d_r  = dist_map[i + 1]      or INF
-                local d_l  = dist_map[i - 1]      or INF
-                local d_dn = dist_map[i + fg_w]   or INF
-                local d_up = dist_map[i - fg_w]   or INF
-
-                local em_r  = (d_r  < edge_w) and (1.0 - d_r  / edge_w) or 0.0
-                local em_l  = (d_l  < edge_w) and (1.0 - d_l  / edge_w) or 0.0
-                local em_dn = (d_dn < edge_w) and (1.0 - d_dn / edge_w) or 0.0
-                local em_up = (d_up < edge_w) and (1.0 - d_up / edge_w) or 0.0
-
-                local gx  = em_r - em_l
-                local gy  = em_dn - em_up
-                local len = math.sqrt(gx * gx + gy * gy)
-                if len > 0.001 then
-                    local nx  = gx / len
-                    local ny  = gy / len
-                    local rim = math.max(0.0, nx * light_dx + ny * light_dy)
-                    rim = rim * em * intensity_f * 0.6
-                    nr = clamp255(nr + amb_r * rim)
-                    ng = clamp255(ng + amb_g * rim)
-                    nb = clamp255(nb + amb_b * rim)
-                end
-            end
-        end
-    end
-
-    -- 修正和 をインプレースで書て、アルファはそのまま保持
-    fg_ptr[base]     = nb
-    fg_ptr[base + 1] = ng
-    fg_ptr[base + 2] = nr
-    -- fg_ptr[base + 3] = oa  -- alpha 変更なし
-
-    -- x/y カウンタをインクリメント（モジュロ / 除算を避けるため手動管理）
-    cur_x = cur_x + 1
-    if cur_x >= fg_w then cur_x = 0; cur_y = cur_y + 1 end
-end
-
--- FFI で修正済みのキャッシュバッファを Lua string に変換して書き戻す。
--- putpixeldata は BGRA バイト列の文字列を現在オブジェクトの出力バッファに書き込む。
-obj.putpixeldata(ffi.string(fg_ptr, fg_w * fg_h * 4))
+-- cb0 レイアウト (float × 12, 4 要素ずつ float4[3] にパック):
+--   [0..3]  amb_r/255, amb_g/255, amb_b/255, intensity_f
+--   [4..7]  edge_w,    edge_thr(0–1), blend_mode_i, enable_wrap(0/1)
+--   [8..11] enable_rim(0/1), light_dx, light_dy, 0
+local LIGHT_DX =  0.707  -- ライト方向 X (右上 45°、正規化済み)
+local LIGHT_DY = -0.707  -- ライト方向 Y
+obj.pixelshader(
+    "scene_lighting_main",
+    "object",
+    "cache:scene_lighting/fg",
+    {
+        amb_r / 255.0,
+        amb_g / 255.0,
+        amb_b / 255.0,
+        intensity_f,
+        math.max(1, math.floor(edge_width)),
+        edge_thr,
+        blend_mode_i,
+        enable_wrap and 1.0 or 0.0,
+        enable_rim  and 1.0 or 0.0,
+        LIGHT_DX,
+        LIGHT_DY,
+        0.0,
+    }
+)

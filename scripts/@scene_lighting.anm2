@@ -1,17 +1,23 @@
 @scene_lighting
 --track@bg_layer:背景レイヤー,-20,-1,-1,1
---track@blend_mode:ブレンドモード,0,3,1,0.25
---track@intensity:強度,0,100,50,2
---track@blur_radius:ブラー半径,1,100,15,2
+--track@blend_mode:ブレンドモード,0,3,1,1
+--track@intensity:強度,0,100,50,1
+--track@blur_radius:ブラー半径,1,100,15,1
 --track@edge_width:エッジ幅,1,50,10,1
---track@edge_threshold:エッジ閾値,1,255,16,2
+--track@edge_threshold:エッジ閾値,1,255,16,1
 --check@enable_wrap:ライトラップ,true
 --check@enable_rim:リムライト,true
---track@rim_angle:リムライト角度,-360,360,45,1
+--track@rim_angle:リムライト角度,-180,180,45,1
 --color@tint_color:ベースカラー,0xffffff
 --track@sampling_method:サンプリング,0,1,0,1
 --separator:ブレンドモード: 0=乗算 1=スクリーン 2=オーバーレイ 3=加算
 --separator:サンプリング: 0=平均 1=中央点
+
+-- 開発メモ:
+-- `--track@...` の 5 番目は移動単位、7 番目は操作倍率。
+-- このスクリプトの整数パラメータは、値の意味上の最小単位に合わせて 1 を使う。
+-- 刻みを粗くしたい場合だけ 5 番目を変更し、ドラッグ量を抑えたい場合だけ 7 番目を使う。
+-- 操作倍率は 1.0 以下のみ指定できるため、既定より大きく動かす用途には使えない。
 
 -- scene_lighting.anm2  v2
 -- シーンライティング: 背景の環境光を前景オブジェクトに適応させるコンポジット効果

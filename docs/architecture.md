@@ -135,7 +135,7 @@ light_dy = -math.sin(rad)
 | `edge_threshold` | track (整数) | 1 〜 255 | 16 | エッジ検出のアルファ閾値 |
 | `enable_wrap` | check (bool) | — | true | ライトラップの有効 / 無効 |
 | `enable_rim` | check (bool) | — | true | リムライトの有効 / 無効 |
-| `rim_angle` | track (整数) | −360 〜 360 | 45 | リムライト方向の角度（45 = 右上） |
+| `rim_angle` | track (整数) | −180 〜 180 | 45 | リムライト方向の角度（45 = 右上） |
 | `tint_color` | color (int) | 0x000000 〜 0xffffff | 0xffffff | 環境色に乗算するティント |
 | `sampling_method` | track (整数) | 0 〜 1 | 0 | サンプリング方法 (0=平均, 1=中央点) |
 

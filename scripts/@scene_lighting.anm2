@@ -19,74 +19,80 @@
 -- HLSL: エッジ検出 + 環境色ブレンド + ライトラップ + リムライト (1 パス)
 
 --[[pixelshader@scene_lighting_main:
-// cb0 layout (float4 × 3):
-//   [0] = { amb_r, amb_g, amb_b, intensity }   (0–1 正規化済み)
-//   [1] = { edge_w, edge_thr, blend_mode, enable_wrap }
-//   [2] = { enable_rim, light_dx, light_dy, 0 }
+Texture2D src : register(t0);
 
-sampler2D sTex : register(s0);   // 描画バッファ (object)
-sampler2D sFg  : register(s1);   // 元前景キャッシュ (cache:scene_lighting/fg)
-
-float4 cb0[3] : register(c0);
+cbuffer constant0 : register(b0)
+{
+    float amb_r;        // 0-1
+    float amb_g;
+    float amb_b;
+    float intensity;
+    float edge_w;
+    float edge_thr;     // 0-1
+    float blend_mode;
+    float enable_wrap;
+    float enable_rim;
+    float light_dx;
+    float light_dy;
+    float _pad;
+};
 
 float blendCh(float f, float b, float mode) {
-    if (mode < 0.5) return f * b;                                          // mode 0: 乗算
-    if (mode < 1.5) return 1.0 - (1.0 - f) * (1.0 - b);                  // mode 1: スクリーン
-    if (mode < 2.5) return (f < 0.5) ? (2.0*f*b) : (1.0 - 2.0*(1.0-f)*(1.0-b)); // mode 2: オーバーレイ
-    return min(f + b, 1.0);                                                 // mode 3: 加算
+    if (mode < 0.5) return f * b;
+    if (mode < 1.5) return 1.0 - (1.0 - f) * (1.0 - b);
+    if (mode < 2.5) return (f < 0.5) ? (2.0*f*b) : (1.0 - 2.0*(1.0-f)*(1.0-b));
+    return min(f + b, 1.0);
 }
 
-float4 main(float2 uv : TEXCOORD) : COLOR {
-    float4 c     = tex2D(sTex, uv);
-    float  athr  = cb0[1].y;
-    if (c.a < athr) return c;  // 完全透明画素はエッジ検出・ブレンドをスキップ
+float4 scene_lighting_main(float4 pos : SV_Position) : SV_Target {
+    int ix = int(pos.x);
+    int iy = int(pos.y);
+    uint sw, sh;
+    src.GetDimensions(sw, sh);
 
-    float3 amb   = cb0[0].xyz;
-    float  inten = cb0[0].w;
-    float  bmode = cb0[1].z;
-    float  ewrap = cb0[1].w;
-    float  erim  = cb0[2].x;
-    float  ldx   = cb0[2].y;
-    float  ldy   = cb0[2].z;
+    float4 c = src.Load(int3(ix, iy, 0));
+    float  a = c.a;
+    if (a < edge_thr) return c;
+
+    float3 amb = float3(amb_r, amb_g, amb_b);
 
     // 環境色ブレンド
     float3 blended;
-    blended.r = blendCh(c.r, amb.r, bmode);
-    blended.g = blendCh(c.g, amb.g, bmode);
-    blended.b = blendCh(c.b, amb.b, bmode);
-    float3 rgb = lerp(c.rgb, blended, inten);
-
-    // テクセルサイズ (ddx/ddy で取得)
-    float2 ts = abs(float2(ddx(uv.x), ddy(uv.y)));
+    blended.r = blendCh(c.r, amb.r, blend_mode);
+    blended.g = blendCh(c.g, amb.g, blend_mode);
+    blended.b = blendCh(c.b, amb.b, blend_mode);
+    float3 rgb = lerp(c.rgb, blended, intensity);
 
     // 4 近傍アルファでエッジ判定
-    float a_l = tex2D(sFg, uv + float2(-ts.x, 0.0)).a;
-    float a_r = tex2D(sFg, uv + float2( ts.x, 0.0)).a;
-    float a_u = tex2D(sFg, uv + float2(0.0, -ts.y)).a;
-    float a_d = tex2D(sFg, uv + float2(0.0,  ts.y)).a;
+    float a_l = src.Load(int3(max(ix-1, 0),          iy,                   0)).a;
+    float a_r = src.Load(int3(min(ix+1, int(sw)-1),  iy,                   0)).a;
+    float a_u = src.Load(int3(ix,                    max(iy-1, 0),          0)).a;
+    float a_d = src.Load(int3(ix,                    min(iy+1, int(sh)-1),  0)).a;
     float minN = min(min(a_l, a_r), min(a_u, a_d));
-    float em   = (minN < athr) ? 1.0 : 0.0;
+    float em   = (minN < edge_thr) ? 1.0 : 0.0;
 
-    // ライトラップ
-    if (ewrap > 0.5 && em > 0.0) {
-        float ws = em * inten * 0.5;
-        rgb = saturate(rgb + amb * ws);
-    }
+    if (em > 0.0) {
+        // ライトラップ
+        if (enable_wrap > 0.5) {
+            float ws = em * intensity * 0.5;
+            rgb = saturate(rgb + amb * ws);
+        }
 
-    // リムライト (勾配から疑似法線)
-    if (erim > 0.5 && em > 0.0) {
-        float gx = step(athr, a_r) - step(athr, a_l);
-        float gy = step(athr, a_d) - step(athr, a_u);
-        float gl = length(float2(gx, gy));
-        if (gl > 0.001) {
-            float2 nrm = float2(gx, gy) / gl;
-            float  rim = max(0.0, dot(nrm, float2(ldx, ldy)));
-            rim = rim * em * inten * 0.6;
-            rgb = saturate(rgb + amb * rim);
+        // リムライト (勾配から疑似法線)
+        if (enable_rim > 0.5) {
+            float gx = step(edge_thr, a_r) - step(edge_thr, a_l);
+            float gy = step(edge_thr, a_d) - step(edge_thr, a_u);
+            float gl = length(float2(gx, gy));
+            if (gl > 0.001) {
+                float2 nrm = float2(gx, gy) / gl;
+                float  rim = max(0.0, dot(nrm, float2(light_dx, light_dy)));
+                rim = rim * em * intensity * 0.6;
+                rgb = saturate(rgb + amb * rim);
+            }
         }
     }
 
-    return float4(rgb, c.a);
+    return float4(rgb, a);
 }
 ]]
 

@@ -117,6 +117,8 @@ light_dx = math.cos(rad)
 light_dy = -math.sin(rad)
 ```
 
+ここで `light_dir = (light_dx, light_dy)` とみなす。
+
 リムライト強度 = max(0, dot(n, light_dir)) × em × intensity
 
 ---

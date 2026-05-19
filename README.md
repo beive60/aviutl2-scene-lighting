@@ -34,7 +34,7 @@ AviUtl2 用のシーンライティング アニメーション効果です。
 ### パラメータ一覧
 
 | パラメータ | デフォルト | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | 背景レイヤー | −1 | 参照する背景レイヤーの相対オフセット（−20 〜 −1） |
 | ブレンドモード | 1（スクリーン） | 0=乗算 / 1=スクリーン / 2=オーバーレイ / 3=加算 |
 | 強度 | 50 | エフェクト全体の強度（%） |
@@ -49,19 +49,24 @@ AviUtl2 用のシーンライティング アニメーション効果です。
 
 ## プロジェクト構成
 
-```
+```text
 aviutl2-scene-lighting/
-├── scripts/
-│   └── @scene_lighting.anm2   # Lua アニメーション効果（本体）
+├── src/
+│   └── @scene_lighting.lua    # 開発用ソース
 ├── docs/
 │   └── architecture.md        # アーキテクチャ設計書
 ├── aviutl2.toml               # au2 CLI 設定
+├── .stylua.toml               # StyLua 設定
+├── .luacheckrc                # Luacheck 設定
 └── README.md
 ```
 
 ## 開発
 
 [aviutl2-cli](https://github.com/sevenc-nanashi/aviutl2-cli)（`au2` コマンド）を使用します。
+
+開発時の正本は `src/@scene_lighting.lua` です。
+`au2 develop` / `au2 release` 実行時に `Script/@scene_lighting.anm2` として配置されます。
 
 ### 初回セットアップ
 
@@ -74,6 +79,27 @@ au2 prepare
 ```powershell
 au2 develop
 ```
+
+### Lua formatter / linter
+
+- Formatter: StyLua
+- Linter: Luacheck
+
+インストール例:
+
+```powershell
+cargo binstall stylua
+luarocks install luacheck
+```
+
+実行例:
+
+```powershell
+stylua src
+luacheck src
+```
+
+VS Code ではタスク `Lua: Format` / `Lua: Lint` をそのまま実行できます。
 
 ## クレジット
 

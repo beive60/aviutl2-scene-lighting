@@ -9,5 +9,5 @@ aviutl2_version = "latest"
 
 [artifacts.script]
 destination = "Script/@scene_lighting.anm2"
-source = "scripts/@scene_lighting.anm2"
+source = "src/@scene_lighting.lua"
 placement_method = "copy"

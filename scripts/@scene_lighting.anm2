@@ -146,33 +146,29 @@ local bg_ptr
 local bg_w, bg_h = fg_w, fg_h
 local has_bg     = false
 
--- キャッシュ名からピクセルポインタを取得するユーティリティ
-local function try_copy_bg(src)
-    if has_bg then return end
+-- obj.load("layer", N) で目的レイヤーを object に読み込み、
+-- 復元前に専用キャッシュへ退避してから getpixeldata() で参照する。
+do
+    local target_layer = math.max(1, (obj.layer or 1) + math.floor(bg_layer))
+
     pcall(function()
-        obj.copybuffer("cache:scene_lighting/bg", src)
-        local ud = obj.getpixeldata("cache:scene_lighting/bg")
-        if ud then
-            local ok2, ptr = pcall(ffi.cast, "uint8_t*", ud)
-            if ok2 and ptr then
-                bg_ptr = ptr
-                has_bg = true
-            end
+        if not obj.load("layer", target_layer, true) then
+            return
+        end
+        if not obj.copybuffer("cache:scene_lighting/bg", "object") then
+            return
+        end
+        local ud, sampled_w, sampled_h = obj.getpixeldata("cache:scene_lighting/bg", "bgra")
+        if ud and sampled_w > 0 and sampled_h > 0 then
+            bg_ptr = ffi.cast("uint8_t*", ud)
+            bg_w = sampled_w
+            bg_h = sampled_h
+            has_bg = true
         end
     end)
-end
 
-do
-    -- 絶対レイヤー番号 (1 始まりを保証; obj.layer が 0 始まり環境も考慮)
-    local cur_layer = obj.layer or 1
-    local rel       = math.floor(bg_layer)        -- トラックバー値 (通常は負値)
-    local abs1      = math.max(1, cur_layer + rel) -- 1 始まりと仮定
-    local abs0      = math.max(0, cur_layer + rel) -- 0 始まりのフォールバック
-
-    try_copy_bg("obj:" .. abs1)          -- 試行 1: 絶対レイヤー (1 始まり)
-    try_copy_bg("obj:" .. abs0)          -- 試行 2: 絶対レイヤー (0 始まり)
-    try_copy_bg("obj:" .. rel)           -- 試行 3: 相対レイヤー参照
-    try_copy_bg("frm:0")                 -- 試行 4: シーンフレームバッファ全体
+    -- obj.load で変更された "object" を FG キャッシュから必ず復元する
+    obj.copybuffer("object", "cache:scene_lighting/fg")
 end
 
 -- ================================================================

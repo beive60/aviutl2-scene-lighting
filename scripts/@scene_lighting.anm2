@@ -63,13 +63,27 @@ float4 scene_lighting_main(float4 pos : SV_Position) : SV_Target {
     blended.b = blendCh(c.b, amb.b, blend_mode);
     float3 rgb = lerp(c.rgb, blended, intensity);
 
-    // 4 近傍アルファでエッジ判定
-    float a_l = src.Load(int3(max(ix-1, 0),          iy,                   0)).a;
-    float a_r = src.Load(int3(min(ix+1, int(sw)-1),  iy,                   0)).a;
-    float a_u = src.Load(int3(ix,                    max(iy-1, 0),          0)).a;
-    float a_d = src.Load(int3(ix,                    min(iy+1, int(sh)-1),  0)).a;
-    float minN = min(min(a_l, a_r), min(a_u, a_d));
-    float em   = (minN < edge_thr) ? 1.0 : 0.0;
+    // エッジ検出: edge_w 画素分外側にサンプリングし、
+    // 最近傍透明画素の距離 k から em = 1 - (k-1)/edge_w のグラデーションを算出
+    static const int MAX_EDGE_W = 50;
+    float em = 0.0;
+    float nx = 0.0;
+    float ny = 0.0;
+    int   iEdgeW = int(edge_w);
+    [loop]
+    for (int k = 1; k <= MAX_EDGE_W; k++) {
+        if (k > iEdgeW) break;
+        float a_l = src.Load(int3(max(ix-k, 0),          iy,                   0)).a;
+        float a_r = src.Load(int3(min(ix+k, int(sw)-1),  iy,                   0)).a;
+        float a_u = src.Load(int3(ix,                    max(iy-k, 0),          0)).a;
+        float a_d = src.Load(int3(ix,                    min(iy+k, int(sh)-1),  0)).a;
+        if (min(min(a_l, a_r), min(a_u, a_d)) < edge_thr) {
+            em = 1.0 - ((float)k - 1.0) / edge_w;
+            nx = step(edge_thr, a_r) - step(edge_thr, a_l);
+            ny = step(edge_thr, a_d) - step(edge_thr, a_u);
+            break;
+        }
+    }
 
     if (em > 0.0) {
         // ライトラップ
@@ -80,11 +94,9 @@ float4 scene_lighting_main(float4 pos : SV_Position) : SV_Target {
 
         // リムライト (勾配から疑似法線)
         if (enable_rim > 0.5) {
-            float gx = step(edge_thr, a_r) - step(edge_thr, a_l);
-            float gy = step(edge_thr, a_d) - step(edge_thr, a_u);
-            float gl = length(float2(gx, gy));
+            float gl = length(float2(nx, ny));
             if (gl > 0.001) {
-                float2 nrm = float2(gx, gy) / gl;
+                float2 nrm = float2(nx, ny) / gl;
                 float  rim = max(0.0, dot(nrm, float2(light_dx, light_dy)));
                 rim = rim * em * intensity * 0.6;
                 rgb = saturate(rgb + amb * rim);
@@ -134,30 +146,33 @@ local bg_ptr
 local bg_w, bg_h = fg_w, fg_h
 local has_bg     = false
 
-do
-    local abs_layer = (obj.layer or 1) + math.floor(bg_layer)
-
-    -- 試行 1: 絶対レイヤー番号でバッファ取得
-    local ok = pcall(function()
-        obj.copybuffer("cache:scene_lighting/bg", "obj:" .. abs_layer)
-        local ud, w, h = obj.getpixeldata("cache:scene_lighting/bg")
+-- キャッシュ名からピクセルポインタを取得するユーティリティ
+local function try_copy_bg(src)
+    if has_bg then return end
+    pcall(function()
+        obj.copybuffer("cache:scene_lighting/bg", src)
+        local ud = obj.getpixeldata("cache:scene_lighting/bg")
         if ud then
-            bg_ptr = ffi.cast("uint8_t*", ud)
-            bg_w, bg_h, has_bg = w or fg_w, h or fg_h, true
+            local ok2, ptr = pcall(ffi.cast, "uint8_t*", ud)
+            if ok2 and ptr then
+                bg_ptr = ptr
+                has_bg = true
+            end
         end
     end)
+end
 
-    -- 試行 2: シーンフレームバッファ（全レイヤー合成結果）にフォールバック
-    if not has_bg then
-        pcall(function()
-            obj.copybuffer("cache:scene_lighting/bg", "frm:0")
-            local ud, w, h = obj.getpixeldata("cache:scene_lighting/bg")
-            if ud then
-                bg_ptr = ffi.cast("uint8_t*", ud)
-                bg_w, bg_h, has_bg = w or fg_w, h or fg_h, true
-            end
-        end)
-    end
+do
+    -- 絶対レイヤー番号 (1 始まりを保証; obj.layer が 0 始まり環境も考慮)
+    local cur_layer = obj.layer or 1
+    local rel       = math.floor(bg_layer)        -- トラックバー値 (通常は負値)
+    local abs1      = math.max(1, cur_layer + rel) -- 1 始まりと仮定
+    local abs0      = math.max(0, cur_layer + rel) -- 0 始まりのフォールバック
+
+    try_copy_bg("obj:" .. abs1)          -- 試行 1: 絶対レイヤー (1 始まり)
+    try_copy_bg("obj:" .. abs0)          -- 試行 2: 絶対レイヤー (0 始まり)
+    try_copy_bg("obj:" .. rel)           -- 試行 3: 相対レイヤー参照
+    try_copy_bg("frm:0")                 -- 試行 4: シーンフレームバッファ全体
 end
 
 -- ================================================================

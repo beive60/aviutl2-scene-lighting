@@ -109,6 +109,16 @@ gy = em(i+fg_w) - em(i-fg_w)
 n  = normalize(gx, gy)
 ```
 
+`light_dir` は UI の `rim_angle`（度）から導出する。
+
+```lua
+rad      = math.rad(rim_angle)
+light_dx = math.cos(rad)
+light_dy = -math.sin(rad)
+```
+
+ここで `light_dir = (light_dx, light_dy)` とみなす。
+
 リムライト強度 = max(0, dot(n, light_dir)) × em × intensity
 
 ---
@@ -125,6 +135,7 @@ n  = normalize(gx, gy)
 | `edge_threshold` | track (整数) | 1 〜 255 | 16 | エッジ検出のアルファ閾値 |
 | `enable_wrap` | check (bool) | — | true | ライトラップの有効 / 無効 |
 | `enable_rim` | check (bool) | — | true | リムライトの有効 / 無効 |
+| `rim_angle` | track (整数) | −360 〜 360 | 45 | リムライト方向の角度（45 = 右上） |
 | `tint_color` | color (int) | 0x000000 〜 0xffffff | 0xffffff | 環境色に乗算するティント |
 | `sampling_method` | track (整数) | 0 〜 1 | 0 | サンプリング方法 (0=平均, 1=中央点) |
 

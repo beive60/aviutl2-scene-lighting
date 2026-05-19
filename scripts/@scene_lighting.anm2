@@ -7,6 +7,7 @@
 --track@edge_threshold:エッジ閾値,1,255,16,1
 --check@enable_wrap:ライトラップ,true
 --check@enable_rim:リムライト,true
+--track@rim_angle:リムライト角度,-360,360,45,1
 --color@tint_color:ベースカラー,0xffffff
 --track@sampling_method:サンプリング,0,1,0,1
 --separator:ブレンドモード: 0=乗算 1=スクリーン 2=オーバーレイ 3=加算
@@ -116,6 +117,9 @@ local edge_thr     = math.max(1, math.floor(edge_threshold)) / 255.0
 local blend_mode_i = math.floor(blend_mode)
 local sampling_i   = math.floor(sampling_method)
 local intensity_f  = intensity / 100.0
+local rim_angle_rad = math.rad(rim_angle)
+local light_dx      = math.cos(rim_angle_rad)
+local light_dy      = -math.sin(rim_angle_rad)
 
 local function clamp255(v)
     if v < 0 then return 0 elseif v > 255 then return 255
@@ -230,8 +234,6 @@ amb_b = clamp255(amb_b * tint_b / 255)
 --   [0..3]  amb_r/255, amb_g/255, amb_b/255, intensity_f
 --   [4..7]  edge_w,    edge_thr(0–1), blend_mode_i, enable_wrap(0/1)
 --   [8..11] enable_rim(0/1), light_dx, light_dy, 0
-local LIGHT_DX =  0.707  -- ライト方向 X (右上 45°、正規化済み)
-local LIGHT_DY = -0.707  -- ライト方向 Y
 obj.pixelshader(
     "scene_lighting_main",
     "object",
@@ -246,8 +248,8 @@ obj.pixelshader(
         blend_mode_i,
         enable_wrap and 1.0 or 0.0,
         enable_rim  and 1.0 or 0.0,
-        LIGHT_DX,
-        LIGHT_DY,
+        light_dx,
+        light_dy,
         0.0,
     }
 )

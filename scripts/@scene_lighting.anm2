@@ -1,10 +1,10 @@
 @scene_lighting
 --track@bg_layer:背景レイヤー,-20,-1,-1,1
---track@blend_mode:ブレンドモード,0,3,1,1
---track@intensity:強度,0,100,50
---track@blur_radius:ブラー半径,1,100,15,1
+--track@blend_mode:ブレンドモード,0,3,1,0.25
+--track@intensity:強度,0,100,50,2
+--track@blur_radius:ブラー半径,1,100,15,2
 --track@edge_width:エッジ幅,1,50,10,1
---track@edge_threshold:エッジ閾値,1,255,16,1
+--track@edge_threshold:エッジ閾値,1,255,16,2
 --check@enable_wrap:ライトラップ,true
 --check@enable_rim:リムライト,true
 --track@rim_angle:リムライト角度,-360,360,45,1

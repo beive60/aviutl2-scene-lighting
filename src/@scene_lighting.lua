@@ -1,17 +1,23 @@
 @scene_lighting
 --track@bg_layer:背景レイヤー,-20,-1,-1,1
 --track@blend_mode:ブレンドモード,0,3,1,1
---track@intensity:強度,0,100,50
+--track@intensity:強度,0,100,50,1
 --track@blur_radius:ブラー半径,1,100,15,1
 --track@edge_width:エッジ幅,1,50,10,1
 --track@edge_threshold:エッジ閾値,1,255,16,1
 --check@enable_wrap:ライトラップ,true
 --check@enable_rim:リムライト,true
---track@rim_angle:リムライト角度,-360,360,45,1
+--track@rim_angle:リムライト角度,-180,180,45,1
 --color@tint_color:ベースカラー,0xffffff
 --track@sampling_method:サンプリング,0,1,0,1
 --separator:ブレンドモード: 0=乗算 1=スクリーン 2=オーバーレイ 3=加算
 --separator:サンプリング: 0=平均 1=中央点
+
+-- 開発メモ:
+-- `--track@...` の 5 番目は移動単位、7 番目は操作倍率。
+-- このスクリプトの整数パラメータは、値の意味上の最小単位に合わせて 1 を使う。
+-- 刻みを粗くしたい場合だけ 5 番目を変更し、ドラッグ量を抑えたい場合だけ 7 番目を使う。
+-- 操作倍率は 1.0 以下のみ指定できるため、既定より大きく動かす用途には使えない。
 
 -- scene_lighting.anm2  v2
 -- シーンライティング: 背景の環境光を前景オブジェクトに適応させるコンポジット効果
@@ -112,23 +118,28 @@ float4 scene_lighting_main(float4 pos : SV_Position) : SV_Target {
 -- ----------------------------------------------------------------
 -- パラメータ前処理
 -- ----------------------------------------------------------------
-local ffi          = require("ffi")
-local edge_thr     = math.max(1, math.floor(edge_threshold)) / 255.0
+local ffi = require("ffi")
+local edge_thr = math.max(1, math.floor(edge_threshold)) / 255.0
 local blend_mode_i = math.floor(blend_mode)
-local sampling_i   = math.floor(sampling_method)
-local intensity_f  = intensity / 100.0
+local sampling_i = math.max(0, math.min(1, math.floor(sampling_method)))
+local intensity_f = intensity / 100.0
 local rim_angle_rad = math.rad(rim_angle)
-local light_dx      = math.cos(rim_angle_rad)
-local light_dy      = -math.sin(rim_angle_rad)
+local light_dx = math.cos(rim_angle_rad)
+local light_dy = -math.sin(rim_angle_rad)
 
 local function clamp255(v)
-    if v < 0 then return 0 elseif v > 255 then return 255
-    else return math.floor(v + 0.5) end
+    if v < 0 then
+        return 0
+    elseif v > 255 then
+        return 255
+    end
+
+    return math.floor(v + 0.5)
 end
 
 -- ティントカラー分解 (0xRRGGBB → r, g, b)
 local tint_r = math.floor(tint_color / 0x10000) % 0x100
-local tint_g = math.floor(tint_color / 0x100)   % 0x100
+local tint_g = math.floor(tint_color / 0x100) % 0x100
 local tint_b = tint_color % 0x100
 
 -- ================================================================
@@ -148,7 +159,7 @@ obj.copybuffer("cache:scene_lighting/fg", "object")
 -- AviUtl2 のバージョンや設定によっては取得できない場合があるため pcall で保護する。
 local bg_ptr
 local bg_w, bg_h = fg_w, fg_h
-local has_bg     = false
+local has_bg = false
 
 -- obj.load("layer", N) で目的レイヤーを object に読み込み、
 -- 復元前に専用キャッシュへ退避してから getpixeldata() で参照する。
@@ -187,7 +198,7 @@ if has_bg then
         local pts = {
             { math.floor(bg_w * 0.25), math.floor(bg_h * 0.25) },
             { math.floor(bg_w * 0.75), math.floor(bg_h * 0.25) },
-            { math.floor(bg_w * 0.5),  math.floor(bg_h * 0.5)  },
+            { math.floor(bg_w * 0.5), math.floor(bg_h * 0.5) },
             { math.floor(bg_w * 0.25), math.floor(bg_h * 0.75) },
             { math.floor(bg_w * 0.75), math.floor(bg_h * 0.75) },
         }
@@ -208,9 +219,9 @@ if has_bg then
         for y = 0, bg_h - 1, step do
             for x = 0, bg_w - 1, step do
                 local pbase = (y * bg_w + x) * 4
-                sb  = sb  + bg_ptr[pbase]
-                sg  = sg  + bg_ptr[pbase + 1]
-                sr  = sr  + bg_ptr[pbase + 2]
+                sb = sb + bg_ptr[pbase]
+                sg = sg + bg_ptr[pbase + 1]
+                sr = sr + bg_ptr[pbase + 2]
                 cnt = cnt + 1
             end
         end
@@ -247,7 +258,7 @@ obj.pixelshader(
         edge_thr,
         blend_mode_i,
         enable_wrap and 1.0 or 0.0,
-        enable_rim  and 1.0 or 0.0,
+        enable_rim and 1.0 or 0.0,
         light_dx,
         light_dy,
         0.0,

@@ -20,8 +20,8 @@ AviUtl2 用のシーンライティング アニメーション効果です。
 ## インストール
 
 1. [Releases](https://github.com/beive60/aviutl2-scene-lighting/releases) から最新の `scene_lighting.au2pkg.zip` をダウンロードします。
-1. `scene_lighting.au2pkg.zip` を解凍し、`@scene_lighting.anm2` を `C:\ProgramData\aviutl2\Script` または `C:\ProgramData\aviutl2\Script\Beive60`にコピーする
-1. AviUtl2 を再起動する
+1. `scene_lighting.au2pkg.zip` を解凍し、`@scene_lighting.anm2` を `C:\ProgramData\aviutl2\Script` または `C:\ProgramData\aviutl2\Script\Beive60` にコピーします。
+1. AviUtl2 を再起動します。
 
 ## 使い方
 
